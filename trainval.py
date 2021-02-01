@@ -10,6 +10,7 @@ import tqdm
 import pprint
 from src import utils as ut
 import torchvision
+from torchvision import transforms      #helen added this
 from haven import haven_utils as hu
 from haven import haven_chk as hc
 
@@ -19,7 +20,7 @@ import exp_configs
 from torch.utils.data.sampler import RandomSampler
 from src import wrappers
 from haven import haven_wizard as hw
-
+from PIL import Image                   #helen added this
 
 def trainval(exp_dict, savedir, args):
     """
@@ -34,12 +35,14 @@ def trainval(exp_dict, savedir, args):
     seed = 42
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if args.use_cuda:
-        device = 'cuda'
-        torch.cuda.manual_seed_all(seed)
-        assert torch.cuda.is_available(), 'cuda is not, available please run with "-c 0"'
-    else:
-        device = 'cpu'
+
+    #helen commented out the following lines to hard code in that the device was 'cpu' to resolve errors
+    #if args.use_cuda:
+        #device = 'cuda'
+        #torch.cuda.manual_seed_all(seed)
+        #assert torch.cuda.is_available(), 'cuda is not, available please run with "-c 0"'
+    #else:
+    device = 'cpu'
 
     print('Running on device: %s' % device)
     
@@ -77,20 +80,41 @@ def trainval(exp_dict, savedir, args):
 
     # Checkpointing
     # =============
-    score_list_path = os.path.join(savedir, "score_list.pkl")
-    model_path = os.path.join(savedir, "model_state_dict.pth")
-    opt_path = os.path.join(savedir, "opt_state_dict.pth")
+    #score_list_path = os.path.join(savedir, "score_list.pkl")      #helen commented out these three lines and hard coded the model and opt paths to resolve errors
+    #model_path = os.path.join(savedir, "model_state_dict.pth")
+    #opt_path = os.path.join(savedir, "opt_state_dict.pth")
+    score_list_path = '/Users/helenpropson/Documents/git/marepesca/results/testresults/score_list.pkl'      #helen added this
+    model_path = '/Users/helenpropson/Documents/git/marepesca/results/testresults/model_state_dict.pth'     #helen added this
+    opt_path = '/Users/helenpropson/Documents/git/marepesca/results/testresults/opt_state_dict.pth'         #helen added this
 
-    if os.path.exists(score_list_path):
+    #helen hard coded that the experiment would resume instead of restarting from epoch 0
+    #if os.path.exists(score_list_path):
         # resume experiment
-        score_list = ut.load_pkl(score_list_path)
-        model.load_state_dict(torch.load(model_path))
-        opt.load_state_dict(torch.load(opt_path))
-        s_epoch = score_list[-1]["epoch"] + 1
-    else:
+    score_list = hu.load_pkl(score_list_path)   #helen changed this from ut.load_pkl to hu.load_pkl to resolve error
+    model.load_state_dict(torch.load(model_path))
+    opt.load_state_dict(torch.load(opt_path))
+    s_epoch = score_list[-1]["epoch"] + 1
+
+    #else:
         # restart experiment
-        score_list = []
-        s_epoch = 0
+        #score_list = []
+        #s_epoch = 0
+
+    # ***************            helen added this code
+    im = Image.open("/Users/helenpropson/Documents/git/marepesca/tank.jpg")
+    # im.show()  #this line will display the image you are running the model on if uncommented
+
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    normalize_transform = transforms.Normalize(mean=mean, std=std)
+
+    data_transform = transforms.Compose([transforms.ToTensor(), normalize_transform])   #transformations we will use on our image
+    im_new = data_transform(im)                                                         #transforms the image into a tensor and normalizes it
+    im_final = im_new.unsqueeze(0)                                                      #adds another dimension so image is the correct shape for the model
+    print("now trying helen's code")                                                    #print statement for debugging
+    #model.vis_on_batch_helen(im_final, f'im_new')    #uncomment this line to run model on image
+
+    # ***************            this is the end of helen's code
 
     # Run training and validation
     for epoch in range(s_epoch, exp_dict["max_epoch"]):
@@ -99,11 +123,17 @@ def trainval(exp_dict, savedir, args):
         # visualize
         model.vis_on_loader(vis_loader, savedir=os.path.join(savedir, "images"))
 
+        print("after vis_on_loader")    #helen add this print statement as an update while iterating
+
         # validate
         score_dict.update(model.val_on_loader(val_loader))
-        
+
+        print("after validate")
+
         # train
         score_dict.update(model.train_on_loader(train_loader))
+
+        print("after train")
 
         # Add score_dict to score_list
         score_list += [score_dict]
@@ -114,7 +144,6 @@ def trainval(exp_dict, savedir, args):
         hu.torch_save(model_path, model.state_dict())
         hu.torch_save(opt_path, opt.state_dict())
         print("Saved in %s" % savedir)
-
 
 if __name__ == '__main__':
     # 8. define a list of experiments
@@ -140,9 +169,11 @@ if __name__ == '__main__':
                         help='Specify the number of workers in the dataloader.')
     parser.add_argument("-v", "--visualize_notebook", type=str, default='',
                         help='Create a jupyter file to visualize the results.')
-    parser.add_argument("-uc", "--use_cuda", type=int, default=1)
+    parser.add_argument("-uc", "--use_cuda", type=int, default=0)
 
     args, others = parser.parse_known_args()
 
     # 9. Launch experiments using magic command
     hw.run_wizard(func=trainval, exp_groups=exp_configs.EXP_GROUPS, args=args)
+
+#command helen uses for trainval: python /Users/helenpropson/Documents/git/marepesca/DeepFish-master/trainval.py -e loc -sb /Users/helenpropson/Documents/git/marepesca/results -d /Users/helenpropson/Documents/git/marepesca/DeepFish -r 1

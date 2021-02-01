@@ -16,6 +16,7 @@ from skimage.segmentation import find_boundaries
 from scipy import ndimage
 from haven import haven_utils as hu
 from haven import haven_img as hi
+import matplotlib.pyplot as plt     #helen added this
 
 class LocWrapper(torch.nn.Module):
     def __init__(self, model, opt):
@@ -36,8 +37,8 @@ class LocWrapper(torch.nn.Module):
     def train_on_batch(self, batch, **extras):
         
         self.train()
-        images = batch["images"].cuda()
-        points = batch["points"].long().cuda()
+        images = batch["images"].to('cpu')
+        points = batch["points"].long().to('cpu')
         logits = self.model.forward(images)
         loss = lcfcn_loss.compute_loss(points=points, probs=logits.sigmoid())
 
@@ -49,8 +50,8 @@ class LocWrapper(torch.nn.Module):
     @torch.no_grad()
     def val_on_batch(self, batch):
         self.eval()
-        images = batch["images"].cuda()
-        points = batch["points"].long().cuda()
+        images = batch["images"].to('cpu')      #helen changed this from .cuda()
+        points = batch["points"].long().to('cpu')   #helen changed this from .cuda()
         logits = self.model.forward(images)
         probs = logits.sigmoid().cpu().numpy()
 
@@ -64,8 +65,10 @@ class LocWrapper(torch.nn.Module):
     @torch.no_grad()
     def vis_on_batch(self, batch, savedir_image):
         self.eval()
-        images = batch["images"].cuda()
-        points = batch["points"].long().cuda()
+        images = batch["images"].to('cpu')   #helen changed this from .cuda()
+        #print(images)
+        #print(images.shape)
+        points = batch["points"].long().to('cpu')   #helen changed this from .cuda()
         logits = self.model.forward(images)
         probs = logits.sigmoid().cpu().numpy()
 
@@ -91,9 +94,14 @@ class LocWrapper(torch.nn.Module):
         pred_points = lcfcn_loss.blobs2points(pred_blobs).squeeze()
         y_list, x_list = np.where(pred_points.squeeze())
         img_pred = hi.mask_on_image(img_org, pred_blobs)
-        # img_pred = hi.points_on_image(y_list, x_list, img_org)
+        #img_pred = hi.points_on_image(y_list, x_list, img_org)
         text = "%s predicted" % (len(y_list))
         hi.text_on_image(text=text, image=img_pred)
+
+        # ***************            helen added this code
+        plt.imshow(img_pred)        #these lines of code display the image with the model's predications on it
+        plt.show()
+        # ***************            end of helen's code
 
         # heatmap 
         heatmap = hi.gray2cmap(pred_probs)
@@ -104,6 +112,61 @@ class LocWrapper(torch.nn.Module):
         img_mask = np.hstack([img_peaks, img_pred, heatmap])
         
         hu.save_image(savedir_image, img_mask)
+
+    # ***************            helen added this code
+    #HELEN'S METHOD (created a method to visualize model's predictions on my own data)
+    @torch.no_grad()
+    def vis_on_batch_helen(self, batch, savedir_image):
+        self.eval()
+        images = batch.to('cpu')
+        #print(images)          #print statement to check what images is for debugging
+        #print(images.shape)    #print statement to check images has the correct shape
+        logits = self.model.forward(images)
+        probs = logits.sigmoid().cpu().numpy()
+
+        blobs = lcfcn_loss.get_blobs(probs=probs)
+
+        pred_counts = (np.unique(blobs) != 0).sum()
+        pred_blobs = blobs
+        pred_probs = probs.squeeze()
+
+        # loc
+        pred_count = pred_counts.ravel()[0]
+        pred_blobs = pred_blobs.squeeze()
+
+        img_org = hu.get_image(images, denorm="rgb")
+        #this is what was originally written: img_org = hu.get_image(batch["images"],denorm="rgb")
+
+        #the following lines are commented out because my own data does not have labels and will thus throw errors
+        # true points
+        #y_list, x_list = np.where(batch["points"][0].long().numpy().squeeze())
+        #img_peaks = hi.points_on_image(y_list, x_list, img_org, radius=11)
+        #text = "%s ground truth" % (batch["points"].sum().item())
+        #hi.text_on_image(text=text, image=img_peaks)
+
+        # pred points
+        pred_points = lcfcn_loss.blobs2points(pred_blobs).squeeze()
+        y_list, x_list = np.where(pred_points.squeeze())
+        img_pred = hi.mask_on_image(img_org, pred_blobs)
+        # img_pred = hi.points_on_image(y_list, x_list, img_org)
+        text = "%s predicted" % (len(y_list))
+        hi.text_on_image(text=text, image=img_pred)
+
+        # these lines of code display the image with the model's predications on it
+        plt.imshow(img_pred)
+        plt.show()
+
+        # heatmap
+        heatmap = hi.gray2cmap(pred_probs)
+        heatmap = hu.f2l(heatmap)
+        hi.text_on_image(text="lcfcn heatmap", image=heatmap)
+
+        img_mask = np.hstack([img_pred, heatmap])   #helen took out im_peaks
+        #this is what was originally written: img_mask = np.hstack([img_peaks, img_pred, heatmap])
+
+        hu.save_image(savedir_image, img_mask)
+    # ***************            end of helen's code
+
 class GAME:
     def __init__(self):
         super().__init__(higher_is_better=False)
@@ -196,9 +259,9 @@ def lc_loss(model, batch):
 
     blob_dict = get_blob_dict(model, batch)
     # put variables in cuda
-    images = batch["images"].cuda()
-    points = batch["points"].cuda()
-    counts = batch["counts"].cuda()
+    images = batch["images"]
+    points = batch["points"]
+    counts = batch["counts"]
 
     return lc_loss_base(model, images, points, counts, blob_dict)
     # print(images.shape)
@@ -238,7 +301,7 @@ def lc_loss_base(logits, images, points, counts, blob_dict):
         T = watersplit(S_npy[l], points_class)
         T = 1 - T
         scale = float(counts.sum())
-        loss += float(scale) * F.nll_loss(S_log, torch.LongTensor(T).cuda()[None],
+        loss += float(scale) * F.nll_loss(S_log, torch.LongTensor(T)[None],
                                           ignore_index=1, reduction='mean')
 
     return loss / N
@@ -249,7 +312,7 @@ def compute_image_loss(S, Counts):
     n, k, h, w = S.size()
 
     # GET TARGET
-    ones = torch.ones(Counts.size(0), 1).long().cuda()
+    ones = torch.ones(Counts.size(0), 1).long()
     BgFgCounts = torch.cat([ones.float(), Counts.float()], 1)
     Target = (BgFgCounts.view(n * k).view(-1) > 0).view(-1).float()
 
@@ -277,7 +340,7 @@ def compute_fp_loss(S_log, blob_dict):
         T = np.ones(blobs.shape[-2:])
         T[blobs[b["class"]] == b["label"]] = 0
 
-        loss += scale * F.nll_loss(S_log, torch.LongTensor(T).cuda()[None],
+        loss += scale * F.nll_loss(S_log, torch.LongTensor(T)[None],
                                    ignore_index=1, reduction='mean')
 
         n_terms += 1
@@ -285,7 +348,7 @@ def compute_fp_loss(S_log, blob_dict):
 
 
 def compute_bg_loss(S_log, bg_mask):
-    loss = F.nll_loss(S_log, torch.LongTensor(bg_mask).cuda()[None],
+    loss = F.nll_loss(S_log, torch.LongTensor(bg_mask)[None],
                       ignore_index=1, reduction='mean')
     return loss
 
@@ -311,7 +374,7 @@ def compute_split_loss(S_log, S, points, blob_dict):
         T = 1 - T
 
         scale = b["n_points"] + 1
-        loss += float(scale) * F.nll_loss(S_log, torch.LongTensor(T).cuda()[None],
+        loss += float(scale) * F.nll_loss(S_log, torch.LongTensor(T)[None],
                                           ignore_index=1, reduction='mean')
 
     return loss
